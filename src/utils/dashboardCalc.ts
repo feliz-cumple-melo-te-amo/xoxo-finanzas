@@ -229,11 +229,7 @@ export function computeTotals(input: DashboardInput): Totals {
     .filter(
       (a) => a.type === "debit" || a.type === "cash" || a.type === "savings",
     )
-    .reduce((s, a) => s + accountBalance(a), 0) -
-    receivables.reduce(
-      (s, r) => s + Math.max(0, Number(r.original_amount) - Number(r.collected_amount)),
-      0,
-    )
+    .reduce((s, a) => s + accountBalance(a), 0)
 
   const investmentValue = investments.reduce(
     (s, i) =>

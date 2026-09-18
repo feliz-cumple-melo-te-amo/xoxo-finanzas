@@ -1,14 +1,19 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
+  ArrowDownUp,
   Banknote,
   CreditCard,
   Landmark,
   Pencil,
   PiggyBank,
   Plus,
+  Search,
   Trash2,
   TrendingUp,
   Percent,
+  ArrowUp,
+  ArrowDown,
+  X,
   type LucideIcon,
 } from "lucide-react"
 import AccountFormModal from "@/components/accounts/AccountFormModal"
@@ -27,16 +32,34 @@ import { accountBalance, cardUsed } from "@/utils/accountBalance"
 import { fmt } from "@/utils/format"
 import type { ShowToast } from "@/types"
 
-const TYPE_META: Record<ApiAccount["type"], {
-  label: string
-  icon: LucideIcon
-  color: string
-}> = {
+const TYPE_META: Record<
+  ApiAccount["type"],
+  { label: string; icon: LucideIcon; color: string }
+> = {
   debit: { label: "Débito", icon: Landmark, color: "#3B82F6" },
   credit: { label: "Crédito", icon: CreditCard, color: "#EF4444" },
   cash: { label: "Efectivo", icon: Banknote, color: "#F59E0B" },
   savings: { label: "Ahorro", icon: PiggyBank, color: "#06D6A0" },
   investment: { label: "Inversión", icon: TrendingUp, color: "#8B5CF6" },
+}
+
+type SortField = "name" | "type" | "created_at" | "last_movement" | "balance"
+type SortDir = "asc" | "desc"
+
+const SORT_LABELS: Record<SortField, string> = {
+  name: "Nombre",
+  type: "Tipo",
+  created_at: "Fecha de registro",
+  last_movement: "Último movimiento",
+  balance: "Saldo",
+}
+
+const TYPE_ORDER: Record<ApiAccount["type"], number> = {
+  cash: 0,
+  debit: 1,
+  savings: 2,
+  investment: 3,
+  credit: 4,
 }
 
 export default function AccountsScreen({
@@ -53,6 +76,13 @@ export default function AccountsScreen({
     useState<Set<number>>(new Set())
   const [txns, setTxns] = useState<ApiTransaction[]>([])
   const [installments, setInstallments] = useState<ApiInstallment[]>([])
+
+  const [search, setSearch] = useState("")
+  const [typeFilter, setTypeFilter] = useState<ApiAccount["type"] | "all">(
+    "all",
+  )
+  const [sortField, setSortField] = useState<SortField>("name")
+  const [sortDir, setSortDir] = useState<SortDir>("asc")
 
   const load = async () => {
     setLoading(true)
@@ -85,6 +115,67 @@ export default function AccountsScreen({
   useEffect(() => {
     load()
   }, [])
+
+  const lastMovementByAccount = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const t of txns) {
+      if (t.account_id == null || !t.date) continue
+      const prev = map.get(t.account_id)
+      if (!prev || t.date > prev) map.set(t.account_id, t.date)
+    }
+    return map
+  }, [txns])
+
+  const filtered = useMemo(() => {
+    let list = [...accounts]
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      list = list.filter(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          TYPE_META[a.type].label.toLowerCase().includes(q),
+      )
+    }
+
+    if (typeFilter !== "all") {
+      list = list.filter((a) => a.type === typeFilter)
+    }
+
+    list.sort((a, b) => {
+      let cmp = 0
+      switch (sortField) {
+        case "name":
+          cmp = a.name.localeCompare(b.name, "es")
+          break
+        case "type":
+          cmp = TYPE_ORDER[a.type] - TYPE_ORDER[b.type]
+          break
+        case "created_at":
+          cmp = (a.created_at ?? "").localeCompare(b.created_at ?? "")
+          break
+        case "last_movement": {
+          const dA = lastMovementByAccount.get(a.id) ?? ""
+          const dB = lastMovementByAccount.get(b.id) ?? ""
+          cmp = dA.localeCompare(dB)
+          break
+        }
+        case "balance":
+          cmp = accountBalance(a) - accountBalance(b)
+          break
+      }
+      return sortDir === "asc" ? cmp : -cmp
+    })
+
+    return list
+  }, [
+    accounts,
+    search,
+    typeFilter,
+    sortField,
+    sortDir,
+    lastMovementByAccount,
+  ])
 
   const openCreate = () => {
     setEditing(null)
@@ -137,6 +228,17 @@ export default function AccountsScreen({
     }
   }
 
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    } else {
+      setSortField(field)
+      setSortDir("asc")
+    }
+  }
+
+  const hasFilters = search.trim() || typeFilter !== "all"
+
   return (
     <div className="flex flex-col gap-5 pb-6">
       <div className="flex items-center justify-between">
@@ -150,23 +252,180 @@ export default function AccountsScreen({
         </button>
       </div>
 
+      {!loading && accounts.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-xl flex-1 min-w-[160px]"
+              style={{ background: "var(--input-bg)" }}
+            >
+              <Search size={14} style={{ color: "var(--text-3)" }} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar cuenta..."
+                className="bg-transparent w-full text-xs outline-none"
+                style={{ color: "var(--text-1)" }}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="hover:opacity-70 transition-opacity"
+                >
+                  <X size={14} style={{ color: "var(--text-3)" }} />
+                </button>
+              )}
+            </div>
+
+            <select
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as SortField)}
+              className="px-3 py-2 rounded-xl text-xs"
+              style={{
+                background: "var(--input-bg-select)",
+                border: "1px solid var(--input-border)",
+                color: "var(--text-2)",
+              }}
+            >
+              {(Object.entries(SORT_LABELS) as [SortField, string][]).map(
+                ([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ),
+              )}
+            </select>
+
+            <button
+              onClick={() =>
+                setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+              }
+              className="p-2 rounded-xl transition-colors hover:bg-white/10"
+              style={{
+                background: "var(--input-bg)",
+                color: "var(--text-2)",
+                border: "1px solid var(--input-border)",
+              }}
+              title={sortDir === "asc" ? "Ascendente" : "Descendente"}
+            >
+              {sortDir === "asc" ? (
+                <ArrowUp size={14} />
+              ) : (
+                <ArrowDown size={14} />
+              )}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex gap-1.5 flex-wrap">
+              <button
+                onClick={() => setTypeFilter("all")}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                style={
+                  typeFilter === "all"
+                    ? {
+                        background:
+                          "linear-gradient(135deg,#7C3AED,#5B21B6)",
+                        color: "var(--text-1)",
+                      }
+                    : {
+                        background: "var(--input-bg)",
+                        color: "var(--text-2)",
+                      }
+                }
+              >
+                Todas
+              </button>
+              {(
+                Object.entries(TYPE_META) as [
+                  ApiAccount["type"],
+                  (typeof TYPE_META)[ApiAccount["type"]],
+                ][]
+              ).map(([key, meta]) => (
+                <button
+                  key={key}
+                  onClick={() => setTypeFilter(key)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5"
+                  style={
+                    typeFilter === key
+                      ? {
+                          background: `linear-gradient(135deg,${meta.color},${meta.color}CC)`,
+                          color: "var(--text-1)",
+                        }
+                      : {
+                          background: "var(--input-bg)",
+                          color: "var(--text-2)",
+                        }
+                  }
+                >
+                  <meta.icon size={12} />
+                  {meta.label}
+                </button>
+              ))}
+            </div>
+
+            {hasFilters && (
+              <button
+                onClick={() => {
+                  setSearch("")
+                  setTypeFilter("all")
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium"
+                style={{
+                  background: "rgba(239,68,68,0.08)",
+                  color: "#F87171",
+                  border: "1px solid rgba(239,68,68,0.2)",
+                }}
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+
+          <div
+            className="flex items-center gap-1 text-xs"
+            style={{ color: "var(--text-3)" }}
+          >
+            <ArrowDownUp size={12} />
+            <span>
+              {filtered.length} cuenta{filtered.length !== 1 ? "s" : ""}
+              {hasFilters ? ` de ${accounts.length}` : ""}
+            </span>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="py-16 flex justify-center">
           <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-purple-600 animate-spin" />
         </div>
       ) : accounts.length === 0 ? (
-        <div className="py-16 text-center text-sm" style={{ color: "var(--text-3)" }}>
+        <div
+          className="py-16 text-center text-sm"
+          style={{ color: "var(--text-3)" }}
+        >
           No hay cuentas registradas. Crea una con el botón "Nueva Cuenta".
+        </div>
+      ) : filtered.length === 0 ? (
+        <div
+          className="py-16 text-center text-sm"
+          style={{ color: "var(--text-3)" }}
+        >
+          No se encontraron cuentas con esos filtros.
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {accounts.map((a) => {
+          {filtered.map((a) => {
             const meta = TYPE_META[a.type]
             const Icon = meta.icon
             const isCredit = a.type === "credit"
-            const used = isCredit ? cardUsed(txns, installments, a.id, accountBalance(a)) : 0
+            const used = isCredit
+              ? cardUsed(txns, installments, a.id, accountBalance(a))
+              : 0
             const creditLimit = a.credit_limit ?? 0
-            const available = isCredit ? Math.max(0, creditLimit - used) : 0
+            const available = isCredit
+              ? Math.max(0, creditLimit - used)
+              : 0
             const usedPct =
               isCredit && creditLimit > 0
                 ? Math.min(100, Math.round((used / creditLimit) * 100))
@@ -191,14 +450,20 @@ export default function AccountsScreen({
                     </div>
                     <div>
                       <p className="text-sm font-semibold">{a.name}</p>
-                      <p className="text-xs" style={{ color: "var(--text-3)" }}>
+                      <p
+                        className="text-xs"
+                        style={{ color: "var(--text-3)" }}
+                      >
                         {meta.label}
                       </p>
                     </div>
                   </div>
                   <span
                     className="text-xs px-2 py-1 rounded-full"
-                    style={{ background: `${meta.color}22`, color: meta.color }}
+                    style={{
+                      background: `${meta.color}22`,
+                      color: meta.color,
+                    }}
                   >
                     {a.is_active ? meta.label : "Inactiva"}
                   </span>
@@ -212,7 +477,10 @@ export default function AccountsScreen({
                     >
                       {fmt(available)}
                     </p>
-                    <p className="text-xs mt-1" style={{ color: "var(--text-3)" }}>
+                    <p
+                      className="text-xs mt-1"
+                      style={{ color: "var(--text-3)" }}
+                    >
                       Saldo disponible
                     </p>
                     <div className="mt-3">

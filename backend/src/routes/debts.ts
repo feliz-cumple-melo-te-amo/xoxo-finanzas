@@ -3,6 +3,7 @@ import type { DeepPartial } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Debt } from '../models/Debt';
 import { Transaction } from '../models/Transaction';
+import { applyCreate } from '../services/recalcBalance';
 import { logger } from '../utils/logger';
 import { authenticate } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
@@ -118,6 +119,10 @@ router.post('/:id/pay', async (req, res, next) => {
       userId: req.user!.id,
     });
     await transactionRepo.save(transaction);
+
+    if (account_id != null) {
+      await applyCreate(req.user!.id, transaction);
+    }
 
     debt.paid_amount = Number(debt.paid_amount) + amountNum;
     if (Number(debt.paid_amount) >= Number(debt.original_amount)) {
